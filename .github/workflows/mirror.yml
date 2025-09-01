@@ -1,24 +1,68 @@
 name: Inventory Mirror
 on:
   schedule:
-    - cron: "*/10 * * * *"   # 每 10 分钟一次（UTC）
-  workflow_dispatch: {}
+    - cron: "*/10 * * * *"         # 每 10 分钟跑一次（UTC）
+  workflow_dispatch: {}            # 允许手动触发
+
+permissions:
+  contents: write                  # 允许写回仓库（很关键）
+
 jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch CSV/JSON from origin
+
+      - name: Ping origin
         run: |
+          echo "Ping /health"
+          curl -i --max-time 20 "http://8.153.197.125:4000/health" || true
+          echo
+          echo "Ping /export/ping"
+          curl -i --max-time 20 "http://8.153.197.125:4000/export/ping" || true
+          echo
+
+      - name: Fetch JSON & CSV with status
+        run: |
+          set -euo pipefail
           mkdir -p docs
-          curl -s "http://8.153.197.125:4000/export/inventory.csv?limit=100000&token=${{ secrets.EXPORT_TOKEN }}" -o docs/inventory.csv
-          curl -s "http://8.153.197.125:4000/export/inventory.json?limit=100000&token=${{ secrets.EXPORT_TOKEN }}" -o docs/inventory.json
-      - name: Commit
+
+          JSON_URL="http://8.153.197.125:4000/export/inventory.json?limit=100000&token=${{ secrets.EXPORT_TOKEN }}"
+          CSV_URL="http://8.153.197.125:4000/export/inventory.csv?limit=100000&token=${{ secrets.EXPORT_TOKEN }}"
+
+          echo "Fetching JSON..."
+          JSON_CODE=$(curl -sS -o docs/inventory.json -w "%{http_code}" --max-time 60 "$JSON_URL")
+          echo "JSON HTTP code: $JSON_CODE"
+          if [ "$JSON_CODE" != "200" ]; then
+            echo "JSON fetch failed, status=$JSON_CODE"
+            head -c 400 docs/inventory.json || true
+            exit 1
+          fi
+
+          echo "Fetching CSV..."
+          CSV_CODE=$(curl -sS -o docs/inventory.csv -w "%{http_code}" --max-time 60 "$CSV_URL")
+          echo "CSV HTTP code: $CSV_CODE"
+          if [ "$CSV_CODE" != "200" ]; then
+            echo "CSV fetch failed, status=$CSV_CODE"
+            head -c 400 docs/inventory.csv || true
+            exit 1
+          fi
+
+          echo "Preview JSON head:"
+          head -c 400 docs/inventory.json || true
+          echo
+          echo "Preview CSV head:"
+          head -c 400 docs/inventory.csv || true
+          echo
+
+      - name: Commit updates
         run: |
           if [[ -n "$(git status --porcelain)" ]]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add docs/inventory.*
+            git add docs/inventory.json docs/inventory.csv
             git commit -m "update inventory $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
             git push
+          else
+            echo "No changes to commit."
           fi
