@@ -1,0 +1,24 @@
+name: Inventory Mirror
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # 每 10 分钟一次（UTC）
+  workflow_dispatch: {}
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch CSV/JSON from origin
+        run: |
+          mkdir -p docs
+          curl -s "http://8.153.197.125:4000/export/inventory.csv?limit=100000&token=${{ secrets.EXPORT_TOKEN }}" -o docs/inventory.csv
+          curl -s "http://8.153.197.125:4000/export/inventory.json?limit=100000&token=${{ secrets.EXPORT_TOKEN }}" -o docs/inventory.json
+      - name: Commit
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs/inventory.*
+            git commit -m "update inventory $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            git push
+          fi
